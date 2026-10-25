@@ -87,7 +87,7 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
 @keyframes turnGlow{0%,100%{box-shadow:0 0 0 0 var(--c)}50%{box-shadow:0 0 0 7px color-mix(in srgb,var(--c) 45%,transparent)}}
 .seat.off .av{filter:grayscale(1);opacity:.6}
 .seat .crown,.mydeck .crown{position:absolute;top:-58%;left:50%;transform:translateX(-50%);font-size:calc(var(--S)*.08);animation:bob 1.6s infinite}
-.pile{position:absolute;width:calc(var(--S)*.13);height:calc(var(--S)*.182);transform:translate(-50%,-50%) rotate(var(--r));z-index:2}
+.pile{position:absolute;width:calc(var(--S)*.145);height:calc(var(--S)*.203);transform:translate(-50%,-50%) rotate(var(--r));z-index:2}
 .pile .slot{position:absolute;inset:0;border-radius:12%;border:2px dashed rgba(255,255,255,.7)}
 .pile .stack{position:absolute;inset:0;border-radius:12%;background:#fff;transform:translate(3px,3px);box-shadow:0 2px 0 rgba(0,0,0,.08)}
 .pile svg.card{position:absolute;inset:0;width:100%;height:100%}
@@ -157,9 +157,9 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
       <path d="M12 8.2 8 5.4l2.6.2L9.4 2.8l2.6 2 2.6-2-1.2 2.8 2.6-.2Z" fill="#4fbf62" stroke="#38a04b" stroke-width=".6" stroke-linejoin="round"/>
     </symbol>
     <symbol id="f-b" viewBox="0 0 24 24">
-      <path d="M4.2 5.2c.6 9.6 7.4 15.8 16.4 12.6-.6-.6-1-1.2-1.3-1.8C12.2 16.6 8 12 7.2 4.6Z" fill="#ffd23f" stroke="#d9a400" stroke-width=".9" stroke-linejoin="round"/>
-      <path d="M7.6 6.5c1.4 5.4 4.6 8.4 10.2 8.8" fill="none" stroke="#f5b900" stroke-width=".9" stroke-linecap="round"/>
-      <path d="M4.2 5.2 3.6 3.4l2.6.2 1 1z" fill="#8a6a2a"/><circle cx="20.4" cy="17.4" r=".9" fill="#6b4f1d"/>
+      <path d="M2.6 6.2C2.6 16.4 10.4 23 21.4 19.2 20.3 18 19.7 17 19.3 15.4 12.9 15.4 9.6 11.2 9.6 3.6Z" fill="#ffd23f" stroke="#d9a400" stroke-width=".9" stroke-linejoin="round"/>
+      <path d="M5.4 6.6c.6 6.8 5 11.2 12.2 11.4" fill="none" stroke="#f5b900" stroke-width="1" stroke-linecap="round"/>
+      <path d="M9.6 3.6 9.2 1.6l-2.6.6.4 2.2z" fill="#8a6a2a"/><circle cx="21" cy="18.4" r="1" fill="#6b4f1d"/>
     </symbol>
     <symbol id="f-l" viewBox="0 0 24 24">
       <circle cx="12" cy="12.6" r="9.2" fill="#7fcb4a" stroke="#4f9e27" stroke-width=".9"/>
@@ -687,14 +687,16 @@ function renderLobby(s){
 }
 
 /* --- 카드 그리기 --- */
-const SPOTS = {
-  1:[[50,70]], 2:[[50,42],[50,98]], 3:[[50,30],[50,70],[50,110]],
-  4:[[30,44],[70,44],[30,96],[70,96]], 5:[[30,34],[70,34],[50,70],[30,106],[70,106]]
+const SPOTS = {           // [x, y, 크기]  카드 100x140 기준
+  1:[[50,70,76]],
+  2:[[50,38,58],[50,102,58]],
+  3:[[50,26,46],[50,70,46],[50,114,46]],
+  4:[[28,40,48],[72,40,48],[28,100,48],[72,100,48]],
+  5:[[27,30,44],[73,30,44],[50,70,44],[27,110,44],[73,110,44]]
 };
 function cardSVG(c){
-  const sz = c.n>=4 ? 34 : 38;
   let u = '';
-  for (const [x,y] of SPOTS[c.n]) u += `<use href="#f-${c.f}" x="${x-sz/2}" y="${y-sz/2}" width="${sz}" height="${sz}"/>`;
+  for (const [x,y,sz] of SPOTS[c.n]) u += `<use href="#f-${c.f}" x="${x-sz/2}" y="${y-sz/2}" width="${sz}" height="${sz}"/>`;
   return `<svg class="card cardsvg" viewBox="0 0 100 140"><rect x="2" y="2" width="96" height="136" rx="13" fill="#fff" stroke="#f1dfcf" stroke-width="3"/>${u}</svg>`;
 }
 
