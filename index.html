@@ -86,6 +86,16 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
 .seat.turn .av{animation:turnGlow 1s ease-in-out infinite;transform:scale(1.12)}
 @keyframes turnGlow{0%,100%{box-shadow:0 0 0 0 var(--c)}50%{box-shadow:0 0 0 7px color-mix(in srgb,var(--c) 45%,transparent)}}
 .seat.off .av{filter:grayscale(1);opacity:.6}
+.seat.out .av{filter:grayscale(1);opacity:.55}
+.seat.out .cnt{border-color:#bbb;color:#999;font-size:12px}
+.seat.out .nm{color:#aaa}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.mode{padding:10px 6px;border-radius:14px;background:#f6ece2;font-size:16px;color:var(--ink);box-shadow:0 3px 0 #e6d6c6}
+.mode.on{background:var(--mint);color:#fff;box-shadow:0 3px 0 #46b3a3}
+.mode:disabled{cursor:default}
+.mode:disabled:not(.on){opacity:.45}
+.mdesc{font-size:14px;color:var(--ink-soft);text-align:center;margin-top:8px;line-height:1.4;min-height:20px}
+.endcard .why{color:var(--ink-soft);font-size:15px;margin-bottom:4px}
 .seat .crown,.mydeck .crown{position:absolute;top:-58%;left:50%;transform:translateX(-50%);font-size:calc(var(--S)*.08);animation:bob 1.6s infinite}
 .pile{position:absolute;width:calc(var(--S)*.145);height:calc(var(--S)*.203);transform:translate(-50%,-50%) rotate(var(--r));z-index:2}
 .pile .slot{position:absolute;inset:0;border-radius:12%;border:2px dashed rgba(255,255,255,.7)}
@@ -201,7 +211,7 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
     <button id="soloBtn" class="btn y">AI랑 연습하기</button>
     <div id="homeMsg" class="msg"></div>
     <div class="howto">
-      <b>놀이 방법</b> · 차례가 되면 내 카드 더미를 톡! 테이블 위 보이는 과일 중 <b>같은 과일이 정확히 5개</b>면 가운데 벨을 누르세요. 가장 빨리 누른 사람이 깔린 카드를 모두 가져가요. 틀리면 내 카드 1장이 바닥으로! <b>5분 뒤 카드가 가장 많은 사람이 챔피언</b>.
+      <b>놀이 방법</b> · 차례가 되면 내 카드 더미를 톡! 테이블 위 보이는 과일 중 <b>같은 과일이 정확히 5개</b>면 가운데 벨을 누르세요. 가장 빨리 누른 사람이 깔린 카드를 모두 가져가요. 틀리면 내 카드 1장이 바닥으로! 방장이 <b>시간제(5분·10분)·한 명 탈락·최후의 1인</b> 중에서 게임 방식을 골라요.
     </div>
   </div>
 </section>
@@ -217,6 +227,8 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
         <button class="chip" id="shareBtn">📤 공유하기</button>
       </div>
     </div>
+    <div class="modes" id="modeBox"></div>
+    <div class="mdesc" id="modeDesc"></div>
     <ul class="plist" id="plist"></ul>
     <div id="hostCtl">
       <div class="row">
@@ -295,7 +307,13 @@ const COLORS = ['#ff8fab','#7fc8f8','#ffc857','#9bd77c','#c3a6ff','#ff9f6b','#6f
 const BOT_NAMES = ['AI 콩이','AI 팥이'];
 const FRUITS = ['s','b','l','p'];
 const qs = new URLSearchParams(location.search);
-const GAME_MS = (+qs.get('gamesec') || 300) * 1000; // 테스트용 ?gamesec=30
+const MODES = {
+  t5:   { label:'⏱ 5분',       short:'5분',       limit:5,  elim:false, desc:'5분 뒤 카드가 가장 많은 사람이 챔피언! 0장이 돼도 벨로 부활할 수 있어요.' },
+  t10:  { label:'⏱ 10분',      short:'10분',      limit:10, elim:false, desc:'10분 뒤 카드가 가장 많은 사람이 챔피언! 0장이 돼도 벨로 부활할 수 있어요.' },
+  one:  { label:'🏁 한 명 탈락', short:'한 명 탈락', limit:0,  elim:true,  desc:'카드가 0장이 되면 탈락. 첫 탈락자가 나오는 순간 카드가 가장 많은 사람이 챔피언!' },
+  last: { label:'👑 최후의 1인', short:'최후의 1인', limit:10, elim:true,  desc:'카드가 0장이 되면 탈락. 끝까지 남은 한 사람이 챔피언! (최대 10분, 시간이 다 되면 카드가 가장 많은 사람)' },
+};
+function limitMs(m){ const L = MODES[m].limit; if (!L) return 0; return qs.get('gamesec') ? +qs.get('gamesec')*1000 : L*60000; } // 테스트용 ?gamesec=30
 const $ = id => document.getElementById(id);
 
 function peerOpts(){
@@ -327,22 +345,23 @@ const H = {
   validAt: {}, penal: new Set(), cands: [], seq: 0,
 };
 function hostInit(code){
-  H.S = { phase:'lobby', code, seats:[], turn:-1, ver:0, collectVer:0, pot:[], endsAt:0, turnDeadline:0, winners:[], lock:false };
+  H.S = { phase:'lobby', code, mode:'t5', seats:[], turn:-1, ver:0, collectVer:0, pot:[], endsAt:0, startedAt:0, endedAt:0, endWhy:'', turnDeadline:0, winners:[], lock:false };
 }
 function makeSeat(name, bot, ccid){
   const used = new Set(H.S.seats.map(s=>s.color));
   const color = COLORS.find(c=>!used.has(c)) || COLORS[0];
   const usedA = new Set(H.S.seats.map(s=>s.avatar));
   const avatar = bot ? '🤖' : (AVATARS.find(a=>!usedA.has(a)) || '🐰');
-  return { id: 'p' + (++H.seq), name, bot, cid: ccid, conn: true, color, avatar, deck: [], pile: [] };
+  return { id: 'p' + (++H.seq), name, bot, cid: ccid, conn: true, color, avatar, deck: [], pile: [], out: false };
 }
 function pubState(){
   const S = H.S;
   return {
     phase:S.phase, code:S.code, ver:S.ver, collectVer:S.collectVer, potN:S.pot.length,
+    mode:S.mode, startedAt:S.startedAt, endedAt:S.endedAt, endWhy:S.endWhy,
     endsAt:S.endsAt, turnDeadline:S.turnDeadline, winners:S.winners, hostSeat:S.hostSeat,
     turn: S.turn >= 0 && S.seats[S.turn] ? S.seats[S.turn].id : null,
-    seats: S.seats.map(s=>({ id:s.id, name:s.name, avatar:s.avatar, color:s.color, bot:s.bot, conn:s.conn,
+    seats: S.seats.map(s=>({ id:s.id, name:s.name, avatar:s.avatar, color:s.color, bot:s.bot, conn:s.conn, out:s.out,
       deckN:s.deck.length, pileN:s.pile.length, top: s.pile.length ? s.pile[s.pile.length-1] : null }))
   };
 }
@@ -388,6 +407,7 @@ function hostAddBot(){
   const nm = BOT_NAMES.find(n=>!bots.some(b=>b.name===n)) || 'AI';
   S.seats.push(makeSeat(nm, true, null)); broadcast();
 }
+function hostSetMode(m){ const S = H.S; if (S.phase!=='lobby' || !MODES[m]) return; S.mode = m; broadcast(); }
 function hostRemove(id){
   const S = H.S; if (S.phase!=='lobby' || id===S.hostSeat) return;
   const i = seatIdx(id); if (i<0) return;
@@ -411,15 +431,18 @@ function hostStart(){
   let k = 0;
   for (const f of FRUITS) for (const n of dist) deck.push({ f, n, id: ++k });
   shuffle(deck);
-  for (const s of S.seats){ s.deck = []; s.pile = []; }
+  for (const s of S.seats){ s.deck = []; s.pile = []; s.out = false; }
   const per = Math.floor(deck.length / S.seats.length);
   S.seats.forEach((s,i)=>{ s.deck = deck.slice(i*per, (i+1)*per); });
   S.pot = deck.slice(per * S.seats.length);
   S.phase = 'play'; S.winners = []; S.ver = 1; S.collectVer = 1; S.lock = false;
   H.validAt = { 1:false }; H.penal.clear(); H.cands = [];
   S.turn = Math.random()*S.seats.length|0;
-  S.endsAt = Date.now() + GAME_MS + 1500;
-  clearT('game'); H.timers.game = setTimeout(()=>hostEnd('time'), GAME_MS + 1500);
+  S.startedAt = Date.now() + 1500; S.endedAt = 0; S.endWhy = '';
+  const L = limitMs(S.mode);
+  clearT('game');
+  if (L){ S.endsAt = S.startedAt + L; H.timers.game = setTimeout(()=>hostEnd('time'), L + 1500); }
+  else S.endsAt = 0;
   broadcast({ type:'deal' });
   setTimeout(()=>scheduleTurn(), 1500);
 }
@@ -447,6 +470,17 @@ function scheduleTurn(){
     if (H.S.turn===turnAt && H.S.ver===verAt) hostFlip(H.S.seats[turnAt].id, true);
   }, wait);
 }
+function checkOut(){
+  const S = H.S; if (!MODES[S.mode].elim) return [];
+  const out = [];
+  for (const s of S.seats) if (!s.out && !s.deck.length){ s.out = true; out.push(s.id); }
+  return out;
+}
+function afterOut(out){
+  const S = H.S; if (!out.length) return;
+  if (S.mode==='one') setTimeout(()=>hostEnd('one'), 900);
+  else if (S.mode==='last' && S.seats.filter(s=>!s.out).length <= 1) setTimeout(()=>hostEnd('last'), 900);
+}
 function hostFlip(id, auto){
   const S = H.S, i = seatIdx(id);
   if (S.phase!=='play' || i<0 || S.turn!==i) return;
@@ -458,9 +492,11 @@ function hostFlip(id, auto){
   const card = s.deck.pop(); s.pile.push(card);
   S.ver++; H.validAt[S.ver] = tableValid();
   S.turn = nextTurn(i);
+  const out = checkOut();
   scheduleTurn();
-  broadcast({ type:'flip', seat:id, card, auto: !!auto });
+  broadcast({ type:'flip', seat:id, card, auto: !!auto, out });
   botsReact();
+  afterOut(out);
 }
 function hostBell(id, v, rt){
   const S = H.S, i = seatIdx(id);
@@ -468,6 +504,7 @@ function hostBell(id, v, rt){
   v = +v; rt = Math.max(0, Math.min(10000, +rt || 0));
   if (!(v in H.validAt) || v < S.collectVer || v > S.ver) return; // 이미 정리된 판에 누른 것
   const s = S.seats[i];
+  if (s.out) return; // 탈락자는 벨을 누를 수 없음
   if (H.validAt[v]){
     if (H.cands.some(c=>c.id===id)) return;
     H.cands.push({ id, rt, at: Date.now() });
@@ -480,8 +517,10 @@ function hostBell(id, v, rt){
   H.penal.add(key);
   let lost = 0;
   if (s.deck.length){ S.pot.push(s.deck.shift()); lost = 1; }
+  const out = checkOut();
   if (S.turn===i && !s.deck.length){ S.turn = nextTurn(i); scheduleTurn(); }
-  broadcast({ type:'mistake', seat:id, lost });
+  broadcast({ type:'mistake', seat:id, lost, out });
+  afterOut(out);
 }
 function resolveBell(){
   const S = H.S; if (S.phase!=='play'){ S.lock=false; return; }
@@ -506,7 +545,7 @@ function botsReact(){
   if (S.phase!=='play') return;
   const v = S.ver, valid = H.validAt[v], near = !valid && tableNearMiss();
   for (const s of S.seats){
-    if (!s.bot) continue;
+    if (!s.bot || s.out) continue;
     let rt = null;
     if (valid) rt = rand(2700, 3300);          // AI 벨: 약 3초, 조금씩 다르게
     else if (near && Math.random() < 0.06) rt = rand(2500, 3300); // 가끔 실수
@@ -518,7 +557,7 @@ function hostEnd(why){
   const S = H.S; if (S.phase!=='play') return;
   clearT('turn'); clearT('game'); clearT('bell');
   for (const k in H.botTimers) clearTimeout(H.botTimers[k]);
-  S.phase = 'end'; S.lock = false; S.turnDeadline = 0;
+  S.phase = 'end'; S.lock = false; S.turnDeadline = 0; S.endedAt = Date.now(); S.endWhy = why;
   const max = Math.max(...S.seats.map(s=>s.deck.length));
   S.winners = S.seats.filter(s=>s.deck.length===max).map(s=>s.id);
   broadcast({ type:'end', why });
@@ -526,7 +565,7 @@ function hostEnd(why){
 function hostAgain(){
   const S = H.S; if (S.phase!=='end') return;
   S.seats = S.seats.filter(s=>s.bot || s.conn);
-  for (const s of S.seats){ s.deck=[]; s.pile=[]; }
+  for (const s of S.seats){ s.deck=[]; s.pile=[]; s.out=false; }
   S.pot = []; S.phase='lobby'; S.winners=[]; S.turn=-1; S.endsAt=0;
   broadcast({ type:'lobby' });
 }
@@ -676,6 +715,13 @@ function renderLobby(s){
   for (let i=s.seats.length; i<Math.max(4, Math.min(8, s.seats.length+1)); i++){
     const li=document.createElement('li'); li.className='empty'; li.textContent='빈 자리'; ul.appendChild(li);
   }
+  const mb = $('modeBox'); mb.innerHTML = '';
+  for (const k of Object.keys(MODES)){
+    const b = document.createElement('button'); b.className = 'mode' + (s.mode===k ? ' on' : '');
+    b.textContent = MODES[k].label; b.disabled = !C.isHost;
+    b.onclick = ()=>hostSetMode(k); mb.appendChild(b);
+  }
+  $('modeDesc').textContent = MODES[s.mode].desc;
   $('hostCtl').classList.toggle('hidden', !C.isHost);
   $('waitMsg').classList.toggle('hidden', C.isHost);
   $('hostHint').classList.toggle('hidden', !C.isHost || C.solo);
@@ -732,12 +778,12 @@ function renderGame(s){
     if (p.id===C.me) continue;
     // 다른 플레이어 자리
     const el = document.createElement('div');
-    el.className = 'seat' + (s.turn===p.id && s.phase==='play' ? ' turn' : '') + (!p.conn ? ' off' : '');
+    el.className = 'seat' + (s.turn===p.id && s.phase==='play' ? ' turn' : '') + (!p.conn ? ' off' : '') + (p.out ? ' out' : '');
     el.id = 'seat-' + p.id;
     el.style.left = (50 + 42*Math.cos(a)) + '%'; el.style.top = (50 + 42*Math.sin(a)) + '%';
     el.style.setProperty('--c', p.color);
     const crown = s.phase==='end' && s.winners.includes(p.id) ? '<div class="crown">👑</div>' : '';
-    el.innerHTML = `<div class="av">${crown}${p.avatar}<div class="cnt" id="cnt-${p.id}">${p.deckN}</div></div><div class="nm">${esc(p.name)}</div>`;
+    el.innerHTML = `<div class="av">${crown}${p.avatar}<div class="cnt" id="cnt-${p.id}">${p.out ? '탈락' : p.deckN}</div></div><div class="nm">${esc(p.name)}</div>`;
     seatsEl.appendChild(el);
   }
   // 바닥 카드
@@ -752,15 +798,16 @@ function renderGame(s){
     const deck = $('mydeck');
     deck.classList.toggle('myturn', myTurn);
     deck.classList.toggle('empty', me.deckN===0);
-    $('myNum').textContent = me.deckN===0 ? '카드 없음\n벨로 되찾기!' : me.deckN;
+    $('myNum').textContent = me.out ? '탈락\n구경 중 👀' : me.deckN===0 ? '카드 없음\n벨로 되찾기!' : me.deckN;
+    $('meAv').style.filter = me.out ? 'grayscale(1)' : '';
     $('speech').classList.toggle('hide', !myTurn);
     let crown = deck.querySelector('.crown');
     const win = s.phase==='end' && s.winners.includes(me.id);
     if (win && !crown){ crown = document.createElement('div'); crown.className='crown'; crown.textContent='👑'; deck.appendChild(crown); }
     if (!win && crown) crown.remove();
   }
-  $('gRoom').textContent = C.solo ? 'AI 연습' : '방 ' + s.code;
-  $('bell').disabled = s.phase!=='play';
+  $('gRoom').textContent = (C.solo ? 'AI 연습' : '방 ' + s.code) + ' · ' + MODES[s.mode].short;
+  $('bell').disabled = s.phase!=='play' || !!(me && me.out);
 }
 
 /* 타이머 루프 */
@@ -768,10 +815,12 @@ function tick(){
   const s = C.view;
   if (s && (s.phase==='play' || s.phase==='end')){
     const hostNow = Date.now() + C.offset;
-    const left = s.phase==='end' ? 0 : Math.max(0, s.endsAt - hostNow);
-    const sec = Math.ceil(left/1000);
+    const now = s.phase==='end' ? (s.endedAt || hostNow) : hostNow;
+    let sec, hurry = false;
+    if (s.endsAt){ sec = Math.ceil(Math.max(0, s.endsAt - now)/1000); hurry = s.phase==='play' && sec <= 30; }
+    else sec = Math.floor(Math.max(0, now - s.startedAt)/1000); // 시간 제한 없는 방식은 흐른 시간
     const t = $('timer'); t.textContent = Math.floor(sec/60) + ':' + String(sec%60).padStart(2,'0');
-    t.classList.toggle('hurry', s.phase==='play' && sec <= 30);
+    t.classList.toggle('hurry', hurry);
     const myTurn = s.phase==='play' && s.turn===C.me && s.turnDeadline;
     $('tbar').style.visibility = myTurn ? 'visible' : 'hidden';
     if (myTurn){ const r = Math.max(0, Math.min(1, (s.turnDeadline - hostNow) / TURN_MS)); $('tbarI').style.transform = `scaleX(${r})`; }
@@ -795,6 +844,7 @@ function onDeck(e){
 function onBell(e){
   e.preventDefault();
   const s = C.view; if (!s || s.phase!=='play') return;
+  const meS = s.seats.find(p=>p.id===C.me); if (meS && meS.out) return;
   const now = performance.now();
   if (now < C.bellCool) return;
   C.bellCool = now + 350;
@@ -851,6 +901,7 @@ async function animate(ev, s){
     const {w,h} = pileSize();
     const from = rectOf(src); from.s = .6; const to = rectOf(dst);
     await flyEl(cardSVG(ev.card), from, to, 260, 0, w, h);
+    announceOut(ev, s);
     return;
   }
   if (ev.type==='collect'){
@@ -881,11 +932,28 @@ async function animate(ev, s){
     if (ev.lost){ const {w,h} = pileSize(); await flyEl(BACK, rectOf(srcEl), rectOf($('bell')), 380, 0, w, h, 90); }
     const p = s.seats.find(x=>x.id===ev.seat);
     if (p) toast((ev.seat===C.me ? '앗, 실수! 카드 1장이 바닥으로' : p.name + ' 님 실수! 카드 1장이 바닥으로'), Infinity);
+    announceOut(ev, s);
     return;
   }
 }
 
+function announceOut(ev, s){
+  if (!ev.out || !ev.out.length) return;
+  const names = ev.out.map(id=>{ const p = s.seats.find(x=>x.id===id); return id===C.me ? '내가' : (p ? p.name + ' 님' : ''); });
+  sfx.buzz();
+  toast(names.join(', ') + (ev.out.includes(C.me) && ev.out.length===1 ? ' 탈락했어요. 구경하며 응원해요! 👀' : ' 탈락! 😢'), Infinity);
+}
 /* --- 끝 화면 --- */
+function endWhyText(s){
+  const outs = s.seats.filter(p=>p.out).map(p=>p.name);
+  switch (s.endWhy){
+    case 'time': return '⏱ 시간 종료!';
+    case 'one':  return '🏁 ' + esc(outs.join(', ')) + ' 님 탈락으로 게임 끝!';
+    case 'last': return '👑 최후의 1인!';
+    case 'all':  return '🃏 카드를 모두 모았어요!';
+    default:     return '게임 끝!';
+  }
+}
 function showEnd(s){
   if (C.ended) return; C.ended = true; hideToast();
   const rank = s.seats.slice().sort((a,b)=>b.deckN-a.deckN);
@@ -899,6 +967,7 @@ function showEnd(s){
     overlay(`<div class="endcard">
       <div class="trophy">🏆</div>
       <h2>${meWin ? '내가 챔피언!' : '게임 끝!'}</h2>
+      <div class="why">${endWhyText(s)}</div>
       <div class="champ">${champs.map(p=>esc(p.name)).join(', ')} ${champs.length>1?'공동 ':''}챔피언 👑</div>
       <ul class="rank">${rows}</ul>
       ${C.isHost ? '<button class="btn" id="againBtn">한 판 더!</button>' : '<div class="hint">방장이 다음 판을 열면 자동으로 이어져요</div>'}
