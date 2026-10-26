@@ -6,7 +6,8 @@
 <title>할리갈리 숲</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.14.1/firebase-app-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.14.1/firebase-database-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <style>
 :root{
@@ -84,7 +85,7 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
 .seat .nm{font-size:calc(var(--S)*.036);max-width:calc(var(--S)*.19);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#fff;padding:1px 7px;border-radius:9px;margin-top:-6px;box-shadow:0 2px 0 rgba(90,70,54,.1);position:relative;z-index:1}
 .seat .cnt{position:absolute;right:-8px;top:-6px;min-width:24px;height:24px;padding:0 5px;border-radius:12px;background:#fff;color:var(--ink);font-size:14px;line-height:24px;text-align:center;border:2px solid var(--c);transition:transform .2s}
 .seat.turn .av{animation:turnGlow 1s ease-in-out infinite;transform:scale(1.12)}
-@keyframes turnGlow{0%,100%{box-shadow:0 0 0 0 var(--c)}50%{box-shadow:0 0 0 7px color-mix(in srgb,var(--c) 45%,transparent)}}
+@keyframes turnGlow{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 0 7px rgba(255,255,255,.75)}}
 .seat.off .av{filter:grayscale(1);opacity:.6}
 .seat.out .av{filter:grayscale(1);opacity:.55}
 .seat.out .cnt{border-color:#bbb;color:#999;font-size:12px}
@@ -121,7 +122,7 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
 .mydeck.empty .b2,.mydeck.empty .b3{display:none}
 .mydeck.empty .num{white-space:pre-line;color:#c4b1a0;text-shadow:none;font-size:15px;width:90%;text-align:center;line-height:1.3}
 .mydeck.myturn{animation:hop .7s ease-in-out infinite}
-.mydeck.myturn .back{background-color:var(--myc);box-shadow:0 5px 0 rgba(90,70,54,.18),0 0 0 6px color-mix(in srgb,var(--myc) 35%,transparent)}
+.mydeck.myturn .back{background-color:var(--myc);box-shadow:0 5px 0 rgba(90,70,54,.18),0 0 0 6px rgba(255,255,255,.8),0 0 0 9px var(--myc)}
 @keyframes hop{50%{transform:translateY(-7px) rotate(-2deg)}}
 .tbar{width:96px;height:8px;border-radius:4px;background:#f1e3d4;overflow:hidden;margin-top:8px}
 .tbar i{display:block;height:100%;width:100%;background:var(--myc);transform-origin:left}
@@ -298,7 +299,6 @@ label.f{display:block;font-size:14px;color:var(--ink-soft);margin:12px 4px 6px}
 /* =========================================================
    공통 설정
    ========================================================= */
-const PREFIX = 'hg-forest-v1-';
 const TURN_MS = 8000;
 const MAX_SEATS = 8, MAX_BOTS = 2;
 const BELL_WINDOW = 220;
@@ -316,17 +316,23 @@ const MODES = {
 function limitMs(m){ const L = MODES[m].limit; if (!L) return 0; return qs.get('gamesec') ? +qs.get('gamesec')*1000 : L*60000; } // 테스트용 ?gamesec=30
 const $ = id => document.getElementById(id);
 
-function peerOpts(){
-  // 테스트용: ?peerhost=localhost&peerport=9000 으로 자체 서버 사용 가능
-  const o = { debug: 0, config: { iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' } ] } };
-  if (qs.get('peerhost')) {
-    o.host = qs.get('peerhost'); o.port = +(qs.get('peerport') || 9000);
-    o.path = qs.get('peerpath') || '/'; o.secure = qs.get('secure') === '1';
-  }
-  return o;
+/* Firebase 실시간 데이터베이스 (모든 연결이 이 서버를 거쳐요) */
+const FB_URL = qs.get('fburl') || 'https://halligalli-e7306-default-rtdb.asia-southeast1.firebasedatabase.app';
+const ROOM_TTL = 6 * 3600 * 1000;   // 6시간 지난 방 번호는 다시 쓸 수 있음
+let DB = null, SRV_OFF = 0;
+function db(){
+  if (DB) return DB;
+  if (typeof firebase === 'undefined' || !firebase.database) return null;
+  try { DB = firebase.initializeApp({ databaseURL: FB_URL }).database(); } catch(e){ return null; }
+  DB.ref('.info/serverTimeOffset').on('value', sn=>{ SRV_OFF = sn.val() || 0; });
+  return DB;
 }
+const NET = { code:null, started:false };
+function rref(p){ return db().ref('rooms/' + NET.code + (p ? '/' + p : '')); }
+function enc(o){ return { j: JSON.stringify(o) }; }
+function dec(sn){ try { const v = sn.val(); return v && v.j ? JSON.parse(v.j) : null; } catch(e){ return null; } }
+function srvNow(){ return Date.now() + SRV_OFF; }
+function withTimeout(p, ms){ return Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')), ms))]); }
 function cid(){
   let v; try { v = localStorage.getItem('hg-cid'); } catch(e){}
   if (!v) { v = Math.random().toString(36).slice(2) + Date.now().toString(36); try{localStorage.setItem('hg-cid', v);}catch(e){} }
@@ -341,7 +347,7 @@ function newCode(){ let s=''; for(let i=0;i<4;i++) s+=Math.random()*10|0; return
    HOST 엔진 (방장 기기에서만 실행되는 심판)
    ========================================================= */
 const H = {
-  S: null, conns: new Map(), peer: null, timers: {}, botTimers: {},
+  S: null, conns: new Map(), timers: {}, botTimers: {},
   validAt: {}, penal: new Set(), cands: [], seq: 0,
 };
 function hostInit(code){
@@ -366,8 +372,11 @@ function pubState(){
   };
 }
 function broadcast(ev){
-  const msg = { t:'state', s:pubState(), ev: ev || null, now: Date.now() };
-  for (const conn of H.conns.values()) { try { if (conn.open) conn.send(msg); } catch(e){} }
+  const msg = { t:'state', s:pubState(), ev: ev || null, srv: SRV_OFF };
+  if (!C.solo && NET.code){
+    try { rref('log').push(enc(msg)); } catch(e){}
+    saveHost();
+  }
   setTimeout(()=>onHostMsg(msg), 0);
 }
 function seatIdx(id){ return H.S.seats.findIndex(s=>s.id===id); }
@@ -443,6 +452,7 @@ function hostStart(){
   clearT('game');
   if (L){ S.endsAt = S.startedAt + L; H.timers.game = setTimeout(()=>hostEnd('time'), L + 1500); }
   else S.endsAt = 0;
+  if (!C.solo && NET.code){ try { rref('log').remove(); } catch(e){} }
   broadcast({ type:'deal' });
   setTimeout(()=>scheduleTurn(), 1500);
 }
@@ -575,8 +585,37 @@ function hostHandle(seatId, m){
   else if (m.t==='bell') hostBell(seatId, m.v, m.rt);
 }
 
-/* --- 방 열기 (네트워크) --- */
-function openRoom(name, solo){
+/* --- 방 열기 (네트워크: Firebase) --- */
+function mkConn(ccid){ return { cid:ccid, send(m){ try { rref('to/' + ccid).push(enc(m)); } catch(e){} } }; }
+let saveT = null;
+function saveHost(){ // 방장 화면이 새로고침돼도 이어서 할 수 있게 저장
+  if (saveT) return;
+  saveT = setTimeout(()=>{ saveT = null;
+    try { rref('save').set(enc({ S:H.S, seq:H.seq, validAt:H.validAt })); } catch(e){}
+  }, 400);
+}
+const HOST_SESS = Math.random().toString(36).slice(2, 10);
+function hostListen(){
+  rref('inbox').on('child_added', sn=>{
+    const m = dec(sn); sn.ref.remove();
+    if (!m || typeof m!=='object') return;
+    const ccid = String(m.cid||'');
+    if (m.t==='join') hostJoin(mkConn(ccid), m.name, ccid);
+    else { const seat = H.S.seats.find(x=>!x.bot && x.cid===ccid); if (seat) hostHandle(seat.id, m); }
+  });
+  rref('online').on('child_removed', sn=>{
+    const seat = H.S.seats.find(x=>!x.bot && x.cid===sn.key && x.id!==H.S.hostSeat); if (seat) hostLeft(seat.id);
+  });
+  rref('online').on('child_added', sn=>{
+    const seat = H.S.seats.find(x=>!x.bot && x.cid===sn.key);
+    if (seat && !seat.conn){ seat.conn = true; H.conns.set(seat.id, mkConn(seat.cid)); broadcast(); }
+  });
+  db().ref('.info/connected').on('value', sn=>{
+    if (!sn.val()) return;
+    const r = rref('hostSess/' + HOST_SESS); r.onDisconnect().remove(); r.set(true); // 방장 접속 표시 (새로고침해도 꼬이지 않게 접속마다 따로)
+  });
+}
+async function openRoom(name, solo){
   hostInit('----');
   const startLocal = (code)=>{
     H.S.code = code;
@@ -586,72 +625,118 @@ function openRoom(name, solo){
     if (solo){ hostAddBot(); hostAddBot(); }
     broadcast();
   };
-  if (solo || typeof Peer === 'undefined'){
-    if (!solo){ $('homeMsg').textContent = '연결 도구를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'; return; }
-    startLocal('연습'); return;
-  }
+  if (solo){ startLocal('연습'); return; }
+  if (!db()){ $('homeMsg').textContent = '연결 도구를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'; return; }
   $('homeMsg').textContent = '방을 만드는 중…';
-  let tries = 0;
-  const attempt = ()=>{
-    const code = newCode();
-    const peer = new Peer(PREFIX + code, peerOpts());
-    peer.on('open', ()=>{ H.peer = peer; $('homeMsg').textContent=''; startLocal(code); history.replaceState(null,'', '?room=' + code + keepParams()); });
-    peer.on('error', (e)=>{
-      if (e.type==='unavailable-id' && tries++ < 5){ peer.destroy(); attempt(); return; }
-      if (!H.peer){ $('homeMsg').textContent = '방을 만들지 못했어요 (' + e.type + '). 잠시 후 다시 시도해 주세요.'; }
-    });
-    peer.on('disconnected', ()=>{ try{ peer.reconnect(); }catch(e){} });
-    peer.on('connection', (conn)=>{
-      conn.on('data', (m)=>{
-        if (!m || typeof m!=='object') return;
-        if (m.t==='join') hostJoin(conn, m.name, String(m.cid||''));
-        else if (m.t==='ping') conn.send({t:'pong', now:Date.now()});
-        else hostHandle(conn.seatId, m);
-      });
-      conn.on('close', ()=>{ if (conn.seatId && H.conns.get(conn.seatId)===conn) hostLeft(conn.seatId); });
-      conn.on('error', ()=>{});
-    });
-  };
-  attempt();
+  $('createBtn').disabled = true;
+  try {
+    let code = null;
+    for (let i=0; i<10 && !code; i++){
+      const c = newCode(); NET.code = c;
+      const meta = (await withTimeout(rref('meta').get(), 10000)).val();
+      if (!meta || srvNow() - (meta.at||0) > ROOM_TTL) code = c;
+    }
+    if (!code) throw new Error('busy');
+    await withTimeout(rref().set({ meta:{ host:MY_CID, at:firebase.database.ServerValue.TIMESTAMP } }), 10000);
+    try { localStorage.setItem('hg-hosting', code); } catch(e){}
+    $('homeMsg').textContent = '';
+    startLocal(code);
+    hostListen();
+    history.replaceState(null,'', '?room=' + code + keepParams());
+  } catch(e){
+    NET.code = null;
+    $('homeMsg').textContent = '방을 만들지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
+  } finally { $('createBtn').disabled = false; }
+}
+async function resumeHost(code){ // 방장이 새로고침/재접속했을 때 이어하기
+  NET.code = code;
+  const meta = (await withTimeout(rref('meta').get(), 10000)).val();
+  if (!meta || meta.host !== MY_CID) return false;
+  const sv = dec(await withTimeout(rref('save').get(), 10000));
+  if (!sv || !sv.S) return false;
+  H.S = sv.S; H.seq = sv.seq || 50; H.validAt = sv.validAt || {}; H.penal = new Set(); H.cands = [];
+  H.S.lock = false;
+  C.isHost = true; C.solo = false; C.me = H.S.hostSeat;
+  for (const x of H.S.seats) if (!x.bot && x.id!==H.S.hostSeat){ x.conn = false; }
+  hostListen();
+  if (H.S.phase==='play'){
+    clearT('game');
+    if (H.S.endsAt){
+      const left = H.S.endsAt - Date.now();
+      if (left <= 0) setTimeout(()=>hostEnd('time'), 500);
+      else H.timers.game = setTimeout(()=>hostEnd('time'), left);
+    }
+    scheduleTurn(); botsReact();
+  }
+  broadcast();
+  return true;
 }
 function keepParams(){
-  let s=''; for (const k of ['peerhost','peerport','peerpath','secure']) if (qs.get(k)) s += '&'+k+'='+encodeURIComponent(qs.get(k));
+  let s=''; for (const k of ['fburl']) if (qs.get(k)) s += '&'+k+'='+encodeURIComponent(qs.get(k));
   return s;
 }
 
 /* =========================================================
    CLIENT (모든 참가자 화면)
    ========================================================= */
-const C = { isHost:false, solo:false, me:null, conn:null, peer:null, view:null, lastVer:-1, shownAt:performance.now(),
+const C = { isHost:false, solo:false, me:null, joinName:null, joined:false, view:null, lastVer:-1, shownAt:performance.now(),
   queue:[], busy:false, offset:0, bellCool:0, sound:true, ended:false };
 
 function sendHost(m){
   if (C.isHost) hostHandle(C.me, m);
-  else if (C.conn && C.conn.open) C.conn.send(m);
+  else if (NET.code && C.joined){ try { rref('inbox').push(enc(Object.assign({}, m, { cid:MY_CID }))); } catch(e){} }
 }
-function joinRoom(name, code){
-  if (typeof Peer === 'undefined'){ $('homeMsg').textContent = '연결 도구를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'; return; }
+async function joinRoom(name, code){
+  if (!db()){ $('homeMsg').textContent = '연결 도구를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.'; return; }
   $('homeMsg').textContent = '방에 들어가는 중…';
-  const peer = new Peer(peerOpts()); C.peer = peer;
-  let joined = false;
-  const fail = (t)=>{ if (!joined) $('homeMsg').textContent = t; };
-  const to = setTimeout(()=>fail('연결이 오래 걸려요. 방 코드를 확인하거나 와이파이/데이터를 바꿔 보세요.'), 12000);
-  peer.on('open', ()=>{
-    const conn = peer.connect(PREFIX + code, { reliable:true });
-    C.conn = conn;
-    conn.on('open', ()=>{ conn.send({ t:'join', name, cid:MY_CID }); });
-    conn.on('data', (m)=>{
-      if (!m) return;
-      if (m.t==='welcome'){ joined = true; clearTimeout(to); C.me = m.seat; $('homeMsg').textContent=''; history.replaceState(null,'','?room='+code+keepParams()); }
-      else if (m.t==='err'){ fail(m.msg); toast(m.msg); }
-      else onHostMsg(m);
-    });
-    conn.on('close', ()=>{ if (joined) showGone(); });
+  $('joinBtn').disabled = true;
+  const fail = (t)=>{ if (!C.joined){ $('homeMsg').textContent = t; $('joinBtn').disabled = false; } };
+  NET.code = code;
+  let meta;
+  try { meta = (await withTimeout(rref('meta').get(), 12000)).val(); }
+  catch(e){ fail('서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요.'); return; }
+  if (!meta || srvNow() - (meta.at||0) > ROOM_TTL){ fail('그 코드의 방을 찾을 수 없어요. 번호를 확인해 주세요.'); return; }
+  if (meta.host === MY_CID){ // 내가 만든 방이면 방장으로 이어하기
+    try { if (await resumeHost(code)){ $('homeMsg').textContent=''; return; } } catch(e){}
+  }
+  try { await rref('to/' + MY_CID).remove(); } catch(e){}
+  C.joinName = name;
+  rref('to/' + MY_CID).on('child_added', sn=>{
+    const m = dec(sn); sn.ref.remove();
+    if (!m) return;
+    if (m.t==='welcome'){
+      C.me = m.seat;
+      if (!C.joined){
+        C.joined = true; clearTimeout(jt);
+        $('homeMsg').textContent=''; $('joinBtn').disabled = false;
+        history.replaceState(null,'','?room='+code+keepParams());
+        listenLog();
+        rref('hostSess').on('value', s3=>{
+          if (s3.val()===null){ C.hostAway = true; toast('방장 연결이 잠시 끊겼어요. 다시 연결되길 기다리는 중…', Infinity); }
+          else if (C.hostAway){ C.hostAway = false; hideToast(); }
+        });
+      }
+    } else if (m.t==='err'){ if (C.joined) toast(m.msg, 3000); else fail(m.msg); }
   });
-  peer.on('error', (e)=>{
-    if (e.type==='peer-unavailable') fail('그 코드의 방을 찾을 수 없어요.');
-    else fail('연결에 문제가 생겼어요 (' + e.type + ').');
+  // 접속 표시 + 입장 요청 (재연결될 때마다 다시 보냄)
+  db().ref('.info/connected').on('value', sn=>{
+    if (!sn.val()) return;
+    const r = rref('online/' + MY_CID); r.onDisconnect().remove(); r.set(true);
+    rref('inbox').push(enc({ t:'join', name:C.joinName, cid:MY_CID }));
   });
+  const jt = setTimeout(async ()=>{
+    let on = null; try { on = (await rref('hostSess').get()).val(); } catch(e){}
+    fail(on ? '방장이 응답하지 않아요. 잠시 후 다시 시도해 주세요.' : '방장 화면이 꺼져 있어요. 방장에게 게임 화면을 켜 달라고 해 주세요.');
+  }, 12000);
+}
+async function listenLog(){ // 최신 상태 1개를 받고, 그 뒤 오는 소식은 하나도 빠짐없이 받기
+  let lastKey = null;
+  try {
+    const first = await withTimeout(rref('log').limitToLast(1).get(), 12000);
+    first.forEach(c=>{ lastKey = c.key; C.firstLog = true; const msg = dec(c); if (msg) onHostMsg(msg); });
+  } catch(e){}
+  const q = lastKey ? rref('log').orderByKey().startAfter(lastKey) : rref('log');
+  q.on('child_added', s2=>{ const msg = dec(s2); if (msg) onHostMsg(msg); });
 }
 function showGone(){
   if (C.view && C.view.phase==='end') return;
@@ -661,8 +746,9 @@ function showGone(){
 }
 
 function onHostMsg(m){
-  if (m.t!=='state') return;
-  C.offset = m.now - Date.now();
+  if (!m || m.t!=='state') return;
+  if (C.firstLog){ C.firstLog = false; if (m.ev && m.ev.type!=='end') m.ev = null; } // 들어오기 전 일은 애니메이션 생략
+  C.offset = C.isHost ? 0 : (SRV_OFF - (m.srv || 0)); // 방장 시계에 맞추기
   C.queue.push(m); pump();
 }
 async function pump(){
@@ -1053,6 +1139,11 @@ window.addEventListener('beforeunload', (e)=>{ if (C.isHost && !C.solo && H.S &&
 (function boot(){
   try { const n = localStorage.getItem('hg-name'); if (n) $('nameIn').value = n; } catch(e){}
   const r = (qs.get('room')||'').trim();
+  let hosting = null; try { hosting = localStorage.getItem('hg-hosting'); } catch(e){}
+  if (/^[0-9]{4}$/.test(r) && hosting === r && db()){
+    $('homeMsg').textContent = '내 방으로 돌아가는 중…';
+    resumeHost(r).then(ok=>{ $('homeMsg').textContent = ok ? '' : ''; }).catch(()=>{ $('homeMsg').textContent=''; });
+  }
   if (/^[0-9]{4}$/.test(r)){
     $('codeIn').value = r;
     $('createBtn').classList.add('hidden'); $('soloBtn').classList.add('hidden');
